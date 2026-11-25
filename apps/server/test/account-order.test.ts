@@ -71,7 +71,7 @@ async function workspace() {
   await account(OWNER_KEY, ownerId, { provider: "zai", authMethod: "api_key" });
   await account(OWNER_CODEX, ownerId, { kind: "codex" });
   await account(OWNER_GEMINI, ownerId, { kind: "antigravity" });
-  return { ...seeded, api, asAda: as(admin), asJoao: as(member), mac };
+  return { ...seeded, api, asAda: as(admin), asJoao: as(member), member, mac };
 }
 
 const order = async (call: Call) => {
@@ -243,4 +243,64 @@ test("Contas de IA as one view: every account with each viewer's rights, the ord
   expect(on.status).toBe(200);
   const res = await asAda("/ai-accounts/order");
   expect(await res.json()).toMatchObject({ keyFallback: true, canConfigure: true });
+});
+
+test("the same account id in two workspaces: moving it in one never touches the other's order", async () => {
+  const a = await workspace();
+  // Workspace B: another owner and computer, the same account ids (a primary key is (org_id, id)), another order.
+  const other = browser(t);
+  await signUp(other, "bia@example.com");
+  const b = await seedOrg(other);
+  const apiB = (path: string, init?: Parameters<typeof other>[1]) =>
+    other(`/api/app/organizations/${b.orgId}${path}`, init);
+  const macB = await pairComputer(t, apiB, { ...RUNNER, exec: true }, { name: "mac-b", ip: "203.0.113.10" });
+  const biaId =
+    (await t.db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, "bia@example.com")))[0]
+      ?.id ?? "";
+  for (const [i, id] of [OWNER_A, JOAO_A, OWNER_B].entries()) {
+    await t.db.insert(schema.machineAccounts).values({
+      id,
+      orgId: b.orgId,
+      machineId: macB.machineId,
+      kind: "claude_code",
+      label: `Conta ${id.slice(-4)}`,
+      status: "active",
+      createdBy: biaId,
+      shared: true,
+      useOrder: 2 - i,
+      createdAt: new Date(Date.UTC(2026, 10, 1, 12, i)),
+    });
+  }
+  const stored = async (orgId: string) =>
+    Object.fromEntries(
+      (await t.db.select().from(schema.machineAccounts).where(eq(schema.machineAccounts.orgId, orgId))).map((r) => [
+        r.id,
+        r.useOrder,
+      ]),
+    );
+  const before = await stored(b.orgId);
+  expect(before).toMatchObject({ [OWNER_A]: 2, [JOAO_A]: 1, [OWNER_B]: 0 });
+
+  // An admin of A reorders: A changes, B (other people, other order) is byte-for-byte what it was.
+  await t.db.update(schema.machineAccounts).set({ useOrder: 0 }).where(eq(schema.machineAccounts.orgId, a.orgId));
+  expect((await move(a.asAda, JOAO_A, 0)).status).toBe(200);
+  expect(await stored(b.orgId)).toEqual(before);
+  expect((await stored(a.orgId))[JOAO_A]).toBe(0);
+  expect(await stored(a.orgId)).toMatchObject({ [JOAO_A]: 0, [OWNER_A]: 1, [OWNER_B]: 2 });
+
+  // B's owner reorders the same ids: A keeps its own order, and B's order is the one asked for.
+  const mineA = await stored(a.orgId);
+  expect((await move(apiB, OWNER_A, 0)).status).toBe(200);
+  expect(await stored(a.orgId)).toEqual(mineA);
+  expect(await stored(b.orgId)).toMatchObject({ [OWNER_A]: 0, [OWNER_B]: 1, [JOAO_A]: 2 });
+  // A member of A, signed in to A only, cannot reach B's account by naming B's workspace.
+  const mine = await stored(a.orgId);
+  const mineB = await stored(b.orgId);
+  const res = await a.member(`/api/app/organizations/${b.orgId}/ai-accounts/${OWNER_B}/order`, {
+    method: "PUT",
+    json: { index: 2 },
+  });
+  expect(res.status).toBe(403);
+  expect(await stored(a.orgId)).toEqual(mine);
+  expect(await stored(b.orgId)).toEqual(mineB);
 });
