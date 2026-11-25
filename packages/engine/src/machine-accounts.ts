@@ -506,7 +506,10 @@ export async function moveAccountInOrder(
     const ids = others.flat().map((g) => g.id);
     for (const [place, id] of ids.entries()) {
       if (group.find((g) => g.id === id)?.useOrder === place) continue;
-      await tx.update(machineAccounts).set({ useOrder: place }).where(eq(machineAccounts.id, id));
+      await tx
+        .update(machineAccounts)
+        .set({ useOrder: place })
+        .where(and(eq(machineAccounts.orgId, orgId), eq(machineAccounts.id, id)));
     }
   });
   await recordAudit(deps.db, {
