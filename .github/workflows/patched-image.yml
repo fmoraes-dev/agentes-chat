@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VERSION: v0.1.18-fmoraes.1
+  VERSION: v0.1.18-fmoraes.2
   IMAGE: ghcr.io/fmoraes-dev/agentes
   BASE: ghcr.io/agentes-chat/agentes@sha256:a9cd9ebdaeb119356b57828dfd0ff5029c82f738ddfd52a20f728a195d3dffd3
   FILE: packages/engine/src/machine-accounts.ts
